@@ -16,11 +16,13 @@ from ..db import db_session
 from ..services import (
     create_or_update_client,
     get_client_by_max_user_id,
+    get_specialist_by_user_id,
     set_birth_date,
     set_city,
     set_phone,
 )
 from ..states import AuthStates
+from .cabinet import send_cabinet_main
 from .common import (
     MAIN_MENU_TEXT,
     WELCOME_TEXT,
@@ -52,6 +54,13 @@ async def _send_welcome(event: MessageCreated | BotStarted, context: MemoryConte
 
 @router.bot_started()
 async def on_bot_started(event: BotStarted, context: MemoryContext) -> None:
+    chat_id, user_id = event.get_ids()
+    async with db_session() as session:
+        spec = await get_specialist_by_user_id(session, user_id)
+    if spec is not None:
+        await context.clear()
+        await send_cabinet_main(event.bot, chat_id, spec)
+        return
     await _send_welcome(event, context)
 
 
@@ -60,7 +69,15 @@ async def on_start_command(event: MessageCreated, context: MemoryContext) -> Non
     chat_id, user_id = event.get_ids()
 
     async with db_session() as session:
-        client = await get_client_by_max_user_id(session, user_id)
+        spec = await get_specialist_by_user_id(session, user_id)
+        client = None
+        if spec is None:
+            client = await get_client_by_max_user_id(session, user_id)
+
+    if spec is not None:
+        await context.clear()
+        await send_cabinet_main(event.bot, chat_id, spec)
+        return
 
     if client is not None and client.phone:
         await context.clear()
@@ -79,7 +96,15 @@ async def on_menu_command(event: MessageCreated, context: MemoryContext) -> None
     chat_id, user_id = event.get_ids()
 
     async with db_session() as session:
-        client = await get_client_by_max_user_id(session, user_id)
+        spec = await get_specialist_by_user_id(session, user_id)
+        client = None
+        if spec is None:
+            client = await get_client_by_max_user_id(session, user_id)
+
+    if spec is not None:
+        await context.clear()
+        await send_cabinet_main(event.bot, chat_id, spec)
+        return
 
     if client is None or not client.phone:
         await _send_welcome(event, context)

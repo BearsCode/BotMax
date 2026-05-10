@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..db.models import Booking, BookingStatus, Client, Specialist
+from ..db.models import Booking, BookingStatus, Client, Service, Specialist
 
 
 class BookingConflictError(RuntimeError):
@@ -25,10 +25,11 @@ async def create_booking(
     *,
     client: Client,
     specialist: Specialist,
+    service: Service,
     starts_at: datetime,
     now: datetime | None = None,
 ) -> Booking:
-    """Создаёт подтверждённую запись клиента к специалисту.
+    """Создаёт подтверждённую запись клиента на услугу мастера.
 
     Бросает :class:`SlotInPastError`, если время в прошлом, и
     :class:`BookingConflictError`, если слот уже занят.
@@ -36,10 +37,13 @@ async def create_booking(
     current_time = now or datetime.now()
     if starts_at <= current_time:
         raise SlotInPastError("Нельзя записаться на прошедшее время")
+    if service.specialist_id != specialist.id:
+        raise ValueError("Услуга принадлежит другому мастеру")
 
     booking = Booking(
         client_id=client.id,
         specialist_id=specialist.id,
+        service_id=service.id,
         starts_at=starts_at,
         status=BookingStatus.CONFIRMED,
     )
@@ -78,7 +82,10 @@ async def get_active_bookings(
             Booking.status == BookingStatus.CONFIRMED,
             Booking.starts_at >= current_time,
         )
-        .options(selectinload(Booking.specialist))
+        .options(
+            selectinload(Booking.specialist),
+            selectinload(Booking.service),
+        )
         .order_by(Booking.starts_at.asc())
     )
     result = await session.scalars(stmt)
@@ -95,6 +102,7 @@ async def get_booking(
         .options(
             selectinload(Booking.specialist),
             selectinload(Booking.client),
+            selectinload(Booking.service),
         )
     )
     return await session.scalar(stmt)

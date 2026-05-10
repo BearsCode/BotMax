@@ -26,9 +26,11 @@ router = Router(router_id="my_bookings")
 
 def _format_booking(booking: Booking) -> str:
     spec = booking.specialist
+    svc = booking.service
     return (
         f"• {spec.category.title_ru}\n"
         f"• {spec.full_name}\n"
+        f"• {svc.title} ({svc.duration_minutes} мин · {svc.price_rub}₽)\n"
         f"• {format_slot(booking.starts_at)}\n"
         f"• {spec.address}"
     )

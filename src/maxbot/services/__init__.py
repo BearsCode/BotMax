@@ -1,17 +1,12 @@
 from .admins import (
+    DuplicateSpecialistError,
     SpecialistField,
     add_specialist,
     delete_specialist,
+    get_specialist_by_max_user_id,
     is_admin,
     list_all_specialists,
     update_specialist_field,
-)
-from .applications import (
-    approve_application,
-    create_master_application,
-    get_application,
-    list_pending_applications,
-    reject_application,
 )
 from .bookings import (
     BookingConflictError,
@@ -28,38 +23,60 @@ from .clients import (
     set_city,
     set_phone,
 )
+from .services import (
+    ServiceField,
+    create_service,
+    delete_service,
+    get_service,
+    list_services,
+    min_price_for,
+    update_service_field,
+)
 from .slots import generate_available_slots
-from .specialists import get_specialist, list_specialists_by_category
+from .specialists import (
+    get_specialist,
+    get_specialist_by_user_id,
+    has_active_service,
+    list_specialists_by_category,
+    specialist_min_price,
+)
 from .stats import StatsSnapshot, TopSpecialistRow, collect_stats, format_stats
 
 __all__ = [
     "BookingConflictError",
+    "DuplicateSpecialistError",
+    "ServiceField",
     "SlotInPastError",
     "SpecialistField",
     "StatsSnapshot",
     "TopSpecialistRow",
     "add_specialist",
-    "approve_application",
     "cancel_booking",
     "collect_stats",
     "create_booking",
-    "create_master_application",
     "create_or_update_client",
+    "create_service",
+    "delete_service",
     "delete_specialist",
     "format_stats",
     "generate_available_slots",
     "get_active_bookings",
-    "get_application",
     "get_booking",
     "get_client_by_max_user_id",
+    "get_service",
     "get_specialist",
+    "get_specialist_by_max_user_id",
+    "get_specialist_by_user_id",
+    "has_active_service",
     "is_admin",
     "list_all_specialists",
-    "list_pending_applications",
+    "list_services",
     "list_specialists_by_category",
-    "reject_application",
+    "min_price_for",
     "set_birth_date",
     "set_city",
     "set_phone",
+    "specialist_min_price",
+    "update_service_field",
     "update_specialist_field",
 ]

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import enum
 from datetime import date, datetime, timezone
-from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Date,
     DateTime,
     Enum,
@@ -20,9 +20,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
-
-if TYPE_CHECKING:
-    pass
 
 
 def _utc_now() -> datetime:
@@ -55,28 +52,24 @@ class BookingStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
-class MasterApplicationStatus(str, enum.Enum):
-    """Статус заявки мастера на добавление в каталог."""
-
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-
-
 class Client(Base):
     """Клиент, который записывается к специалисту."""
 
     __tablename__ = "clients"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    max_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
+    max_user_id: Mapped[int] = mapped_column(
+        BigInteger, unique=True, index=True, nullable=False
+    )
     max_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     first_name: Mapped[str] = mapped_column(String(128), nullable=False)
     last_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     phone: Mapped[str] = mapped_column(String(32), nullable=False)
     city: Mapped[str | None] = mapped_column(String(128), nullable=True)
     birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utc_now, nullable=False
+    )
 
     bookings: Mapped[list[Booking]] = relationship(
         back_populates="client",
@@ -84,15 +77,27 @@ class Client(Base):
     )
 
     def __repr__(self) -> str:
-        return f"Client(id={self.id}, max_user_id={self.max_user_id}, phone={self.phone!r})"
+        return (
+            f"Client(id={self.id}, max_user_id={self.max_user_id}, phone={self.phone!r})"
+        )
 
 
 class Specialist(Base):
-    """Специалист, к которому записываются."""
+    """Специалист (мастер) — учётная запись, заведённая администратором.
+
+    Идентифицируется по `max_user_id` — это уникальный ID реального
+    пользователя MAX. Самостоятельной регистрации мастеров нет: их
+    создаёт администратор, заполняя минимум полей. Остальные данные
+    (описание/фото/телефон/услуги/график) мастер заполняет сам в
+    личном кабинете бота.
+    """
 
     __tablename__ = "specialists"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    max_user_id: Mapped[int] = mapped_column(
+        BigInteger, unique=True, index=True, nullable=False
+    )
     category: Mapped[SpecialistCategory] = mapped_column(
         Enum(SpecialistCategory, name="specialist_category"),
         index=True,
@@ -101,16 +106,22 @@ class Specialist(Base):
     first_name: Mapped[str] = mapped_column(String(128), nullable=False)
     last_name: Mapped[str] = mapped_column(String(128), nullable=False)
     address: Mapped[str] = mapped_column(String(256), nullable=False)
-    price_rub: Mapped[int] = mapped_column(Integer, nullable=False)
     rating: Mapped[float] = mapped_column(Float, default=5.0, nullable=False)
     photo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
-    max_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     work_start_hour: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     work_end_hour: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
-    slot_step_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utc_now, nullable=False
+    )
 
+    services: Mapped[list[Service]] = relationship(
+        back_populates="specialist",
+        cascade="all, delete-orphan",
+        order_by="Service.id",
+    )
     bookings: Mapped[list[Booking]] = relationship(back_populates="specialist")
 
     @property
@@ -119,17 +130,49 @@ class Specialist(Base):
 
     def __repr__(self) -> str:
         return (
-            f"Specialist(id={self.id}, category={self.category.value}, "
-            f"name={self.full_name!r})"
+            f"Specialist(id={self.id}, max_user_id={self.max_user_id}, "
+            f"category={self.category.value}, name={self.full_name!r})"
+        )
+
+
+class Service(Base):
+    """Услуга мастера: название, цена, длительность, описание."""
+
+    __tablename__ = "services"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    specialist_id: Mapped[int] = mapped_column(
+        ForeignKey("specialists.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    price_rub: Mapped[int] = mapped_column(Integer, nullable=False)
+    duration_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utc_now, nullable=False
+    )
+
+    specialist: Mapped[Specialist] = relationship(back_populates="services")
+    bookings: Mapped[list[Booking]] = relationship(back_populates="service")
+
+    def __repr__(self) -> str:
+        return (
+            f"Service(id={self.id}, specialist_id={self.specialist_id}, "
+            f"title={self.title!r}, price_rub={self.price_rub})"
         )
 
 
 class Booking(Base):
-    """Запись клиента к специалисту на конкретное время."""
+    """Запись клиента к мастеру на конкретное время и услугу."""
 
     __tablename__ = "bookings"
     __table_args__ = (
-        UniqueConstraint("specialist_id", "starts_at", name="uq_booking_specialist_time"),
+        UniqueConstraint(
+            "specialist_id", "starts_at", name="uq_booking_specialist_time"
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -137,7 +180,14 @@ class Booking(Base):
         ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True
     )
     specialist_id: Mapped[int] = mapped_column(
-        ForeignKey("specialists.id", ondelete="RESTRICT"), nullable=False, index=True
+        ForeignKey("specialists.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    service_id: Mapped[int] = mapped_column(
+        ForeignKey("services.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
     )
     starts_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     status: Mapped[BookingStatus] = mapped_column(
@@ -145,58 +195,16 @@ class Booking(Base):
         default=BookingStatus.CONFIRMED,
         nullable=False,
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utc_now, nullable=False
+    )
 
     client: Mapped[Client] = relationship(back_populates="bookings")
     specialist: Mapped[Specialist] = relationship(back_populates="bookings")
+    service: Mapped[Service] = relationship(back_populates="bookings")
 
     def __repr__(self) -> str:
         return (
             f"Booking(id={self.id}, client_id={self.client_id}, "
             f"specialist_id={self.specialist_id}, starts_at={self.starts_at.isoformat()})"
-        )
-
-
-class MasterApplication(Base):
-    """Заявка мастера на добавление в каталог."""
-
-    __tablename__ = "master_applications"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    max_user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
-    max_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    first_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    last_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    photo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    category: Mapped[SpecialistCategory] = mapped_column(
-        Enum(SpecialistCategory, name="specialist_category"), nullable=False
-    )
-    price_rub: Mapped[int] = mapped_column(Integer, nullable=False)
-    description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
-    address: Mapped[str] = mapped_column(String(256), nullable=False)
-    work_start_hour: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
-    work_end_hour: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
-    status: Mapped[MasterApplicationStatus] = mapped_column(
-        Enum(MasterApplicationStatus, name="master_application_status"),
-        default=MasterApplicationStatus.PENDING,
-        index=True,
-        nullable=False,
-    )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now, nullable=False)
-    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    decided_by_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    specialist_id: Mapped[int | None] = mapped_column(
-        ForeignKey("specialists.id", ondelete="SET NULL"), nullable=True
-    )
-
-    @property
-    def full_name(self) -> str:
-        if self.last_name:
-            return f"{self.first_name} {self.last_name}".strip()
-        return self.first_name
-
-    def __repr__(self) -> str:
-        return (
-            f"MasterApplication(id={self.id}, max_user_id={self.max_user_id}, "
-            f"status={self.status.value})"
         )

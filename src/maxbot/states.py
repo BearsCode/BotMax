@@ -1,4 +1,4 @@
-"""FSM-состояния, повторяющие диаграмму флоу бота."""
+"""FSM-состояния флоу бота."""
 
 from __future__ import annotations
 
@@ -14,39 +14,41 @@ class AuthStates(StatesGroup):
 
 
 class BookingStates(StatesGroup):
-    """Шаги записи к специалисту."""
+    """Шаги записи к мастеру: категория → мастер → услуга → слот → подтверждение."""
 
     choosing_category = State()
     choosing_specialist = State()
+    choosing_service = State()
     choosing_slot = State()
     confirming = State()
 
 
-class MasterStates(StatesGroup):
-    """Шаги мастера при подаче заявки в каталог."""
-
-    waiting_name = State()
-    waiting_photo = State()
-    waiting_category = State()
-    waiting_price = State()
-    waiting_description = State()
-    waiting_address = State()
-    waiting_schedule = State()
-
-
 class AdminAddStates(StatesGroup):
-    """Админ добавляет мастера вручную."""
+    """Админ добавляет мастера по уникальному max_user_id.
 
+    Минимальный набор полей: ID, имя/фамилия, категория, адрес.
+    Остальные данные мастер заполняет сам в личном кабинете.
+    """
+
+    waiting_user_id = State()
     waiting_name = State()
-    waiting_photo = State()
     waiting_category = State()
-    waiting_price = State()
-    waiting_description = State()
     waiting_address = State()
-    waiting_schedule = State()
 
 
 class AdminEditStates(StatesGroup):
-    """Админ редактирует данные существующего мастера."""
+    """Админ редактирует поле мастера или его услугу."""
 
     waiting_value = State()
+
+
+class CabinetStates(StatesGroup):
+    """Личный кабинет мастера."""
+
+    editing_profile_value = State()
+    creating_service_title = State()
+    creating_service_price = State()
+    creating_service_duration = State()
+    creating_service_description = State()
+    editing_service_value = State()
+    editing_schedule_value = State()

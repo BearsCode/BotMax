@@ -1,4 +1,4 @@
-"""Тесты сервисов админ-панели и заявок мастеров."""
+"""Тесты сервисов админ-панели и каталога мастеров."""
 
 from __future__ import annotations
 
@@ -7,21 +7,19 @@ from datetime import datetime, timedelta
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from maxbot.db.models import MasterApplicationStatus, SpecialistCategory
+from maxbot.db.models import SpecialistCategory
 from maxbot.services import (
+    DuplicateSpecialistError,
     SpecialistField,
     add_specialist,
-    approve_application,
     collect_stats,
     create_booking,
-    create_master_application,
     create_or_update_client,
+    create_service,
     delete_specialist,
     is_admin,
     list_all_specialists,
-    list_pending_applications,
     list_specialists_by_category,
-    reject_application,
     update_specialist_field,
 )
 
@@ -32,67 +30,38 @@ def test_is_admin() -> None:
     assert is_admin(1, []) is False
 
 
-async def _create_app(session: AsyncSession, *, user_id: int = 100):
-    return await create_master_application(
+async def test_add_specialist_requires_unique_user_id(session: AsyncSession) -> None:
+    spec = await add_specialist(
         session,
-        max_user_id=user_id,
-        max_chat_id=user_id,
-        first_name="Иван",
-        last_name="Иванов",
-        photo_url=None,
-        category=SpecialistCategory.HAIRDRESSER,
-        price_rub=1500,
-        description="Стрижки и укладки",
-        address="г. Артёмовский, ул. Тестовая 1",
-        work_start_hour=10,
-        work_end_hour=20,
+        max_user_id=100,
+        category=SpecialistCategory.MAKEUP,
+        first_name="Анна",
+        last_name="Петрова",
+        address="ул. Адрес 1",
     )
+    assert spec.id > 0
+    assert spec.max_user_id == 100
+    assert spec.is_active is True
 
-
-async def test_application_create_and_list(session: AsyncSession) -> None:
-    app = await _create_app(session)
-    assert app.status == MasterApplicationStatus.PENDING
-
-    pending = await list_pending_applications(session)
-    assert len(pending) == 1
-    assert pending[0].id == app.id
-
-
-async def test_approve_application_creates_specialist(
-    session: AsyncSession,
-) -> None:
-    app = await _create_app(session)
-    specialist = await approve_application(session, app, admin_user_id=1)
-
-    assert app.status == MasterApplicationStatus.APPROVED
-    assert app.specialist_id == specialist.id
-    assert specialist.first_name == "Иван"
-    assert specialist.max_user_id == app.max_user_id
-
-    catalog = await list_specialists_by_category(
-        session, SpecialistCategory.HAIRDRESSER
-    )
-    assert any(s.id == specialist.id for s in catalog)
-
-
-async def test_reject_application(session: AsyncSession) -> None:
-    app = await _create_app(session)
-    rejected = await reject_application(session, app, admin_user_id=1)
-    assert rejected.status == MasterApplicationStatus.REJECTED
-    assert (await list_pending_applications(session)) == []
+    with pytest.raises(DuplicateSpecialistError):
+        await add_specialist(
+            session,
+            max_user_id=100,
+            category=SpecialistCategory.MANICURE,
+            first_name="Other",
+            last_name="Person",
+            address="ул. Другая 2",
+        )
 
 
 async def test_admin_add_and_delete_specialist(session: AsyncSession) -> None:
     spec = await add_specialist(
         session,
+        max_user_id=200,
         category=SpecialistCategory.MAKEUP,
         first_name="Анна",
         last_name="Петрова",
         address="ул. Адрес 1",
-        price_rub=2500,
-        description="Макияж",
-        work_start_hour=10,
-        work_end_hour=20,
     )
     listed = await list_all_specialists(session)
     assert any(s.id == spec.id for s in listed)
@@ -105,17 +74,12 @@ async def test_admin_add_and_delete_specialist(session: AsyncSession) -> None:
 async def test_update_specialist_field(session: AsyncSession) -> None:
     spec = await add_specialist(
         session,
+        max_user_id=300,
         category=SpecialistCategory.MAKEUP,
         first_name="Анна",
         last_name="Петрова",
         address="ул. Адрес 1",
-        price_rub=2500,
     )
-
-    updated = await update_specialist_field(
-        session, spec, SpecialistField.PRICE, "3000"
-    )
-    assert updated.price_rub == 3000
 
     updated = await update_specialist_field(
         session, spec, SpecialistField.CATEGORY, "manicure"
@@ -127,20 +91,26 @@ async def test_update_specialist_field(session: AsyncSession) -> None:
     )
     assert updated.work_end_hour == 22
 
+    updated = await update_specialist_field(
+        session, spec, SpecialistField.IS_ACTIVE, "0"
+    )
+    assert updated.is_active is False
+
+    updated = await update_specialist_field(
+        session, spec, SpecialistField.PHONE, "+71234567890"
+    )
+    assert updated.phone == "+71234567890"
+
 
 async def test_update_specialist_field_validates(session: AsyncSession) -> None:
     spec = await add_specialist(
         session,
+        max_user_id=400,
         category=SpecialistCategory.HAIRDRESSER,
         first_name="A",
         last_name="B",
         address="addr addr",
-        price_rub=100,
     )
-    with pytest.raises(ValueError):
-        await update_specialist_field(
-            session, spec, SpecialistField.PRICE, "not-a-number"
-        )
     with pytest.raises(ValueError):
         await update_specialist_field(
             session, spec, SpecialistField.WORK_START, "30"
@@ -149,30 +119,56 @@ async def test_update_specialist_field_validates(session: AsyncSession) -> None:
         await update_specialist_field(
             session, spec, SpecialistField.CATEGORY, "wrong"
         )
+    with pytest.raises(ValueError):
+        await update_specialist_field(
+            session, spec, SpecialistField.IS_ACTIVE, "не точно"
+        )
 
 
-async def test_collect_stats(seeded_session: AsyncSession) -> None:
+async def test_collect_stats(session: AsyncSession) -> None:
+    spec = await add_specialist(
+        session,
+        max_user_id=500,
+        category=SpecialistCategory.MANICURE,
+        first_name="Юлия",
+        last_name="Кузнецова",
+        address="ул. Тестовая 1",
+    )
+    service = await create_service(
+        session,
+        specialist=spec,
+        title="Маникюр классический",
+        price_rub=1500,
+        duration_minutes=60,
+    )
+
     client = await create_or_update_client(
-        seeded_session,
+        session,
         max_user_id=10,
         first_name="Test",
         last_name=None,
         max_chat_id=10,
     )
-    spec = (
-        await list_specialists_by_category(
-            seeded_session, SpecialistCategory.MANICURE
-        )
-    )[0]
+    client.phone = "+71234567890"
+    await session.commit()
 
     starts_at = datetime.now() + timedelta(days=1, hours=1)
     await create_booking(
-        seeded_session, client=client, specialist=spec, starts_at=starts_at
+        session,
+        client=client,
+        specialist=spec,
+        service=service,
+        starts_at=starts_at,
     )
 
-    snapshot = await collect_stats(seeded_session)
+    snapshot = await collect_stats(session)
     assert snapshot.total_active_bookings == 1
     assert snapshot.active_clients == 1
     assert snapshot.top_specialists
     assert snapshot.top_specialists[0].specialist_id == spec.id
     assert snapshot.top_specialists[0].bookings_count == 1
+
+    catalog = await list_specialists_by_category(
+        session, SpecialistCategory.MANICURE
+    )
+    assert any(s.id == spec.id for s in catalog)

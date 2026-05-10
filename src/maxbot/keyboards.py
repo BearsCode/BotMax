@@ -11,7 +11,7 @@ from maxapi.types import (
 )
 from maxapi.utils.inline_keyboard import InlineKeyboardBuilder
 
-from .db.models import Booking, MasterApplication, Specialist, SpecialistCategory
+from .db.models import Booking, Service, Specialist, SpecialistCategory
 
 # ---- Префиксы payload'ов callback-кнопок -----------------------------------
 
@@ -21,30 +21,42 @@ CB_MENU_LIST = "menu:list"
 
 CB_CATEGORY_PREFIX = "cat:"
 CB_SPECIALIST_PREFIX = "spec:"
+CB_SERVICE_PREFIX = "svc:"
 CB_SLOT_PREFIX = "slot:"
 CB_CONFIRM = "book:confirm"
 CB_CANCEL = "book:cancel"
 
 CB_CANCEL_BOOKING_PREFIX = "cancelb:"
 
-# Мастер
-CB_MASTER_CATEGORY_PREFIX = "mcat:"
-CB_MASTER_SKIP_PHOTO = "mphoto:skip"
-
-# Админ
-CB_ADMIN_APPLICATIONS = "admin:apps"
+# Админ-панель
 CB_ADMIN_ADD = "admin:add"
 CB_ADMIN_DELETE = "admin:del"
 CB_ADMIN_EDIT = "admin:edit"
 CB_ADMIN_STATS = "admin:stats"
-
-CB_APP_APPROVE_PREFIX = "appapprove:"
-CB_APP_REJECT_PREFIX = "appreject:"
+CB_ADMIN_LIST = "admin:list"
 
 CB_ADMIN_DEL_SPEC_PREFIX = "adel:"
 CB_ADMIN_EDIT_SPEC_PREFIX = "aedit:"
 CB_ADMIN_EDIT_FIELD_PREFIX = "aef:"  # aef:<spec_id>:<field>
-CB_ADMIN_CAT_PREFIX = "acat:"  # для админ-добавления и редактирования категории
+CB_ADMIN_CAT_PREFIX = "acat:"  # выбор категории при создании/редактировании
+
+# Кабинет мастера
+CB_CAB_PROFILE = "cab:profile"
+CB_CAB_SERVICES = "cab:services"
+CB_CAB_SCHEDULE = "cab:schedule"
+CB_CAB_TOGGLE_ACTIVE = "cab:toggle"
+CB_CAB_BACK = "cab:back"
+
+CB_CAB_PROFILE_FIELD_PREFIX = "cpf:"  # cpf:<field>
+CB_CAB_SCHEDULE_FIELD_PREFIX = "csf:"  # csf:<field>
+
+CB_CAB_SVC_NEW = "csvc:new"
+CB_CAB_SVC_EDIT_PREFIX = "csvce:"  # csvce:<service_id>
+CB_CAB_SVC_FIELD_PREFIX = "csvcf:"  # csvcf:<service_id>:<field>
+CB_CAB_SVC_DELETE_PREFIX = "csvcd:"  # csvcd:<service_id>
+CB_CAB_SVC_TOGGLE_PREFIX = "csvct:"  # csvct:<service_id>
+CB_CAB_SVC_SKIP_DESC = "csvc:skipdesc"
+CB_CAB_SVC_BACK = "csvc:back"
 
 CB_NOOP = "noop"
 
@@ -83,15 +95,27 @@ def categories_keyboard() -> Attachment:
 
 # ---- Список специалистов ---------------------------------------------------
 
-def specialists_keyboard(specialists: list[Specialist]) -> Attachment:
+def specialists_keyboard(
+    items: list[tuple[Specialist, int | None]],
+) -> Attachment:
+    """`items` — пары (мастер, минимальная_цена_по_услугам)."""
     builder = InlineKeyboardBuilder()
-    for spec in specialists:
+    for spec, min_price in items:
         rating_str = f"{spec.rating:.1f}".rstrip("0").rstrip(".") or "0"
-        text = (
-            f"{spec.full_name} · {spec.price_rub}₽ · ⭐ {rating_str}"
-        )
+        price_str = f"от {min_price}₽" if min_price else "услуги ещё не указаны"
+        text = f"{spec.full_name} · {price_str} · ⭐ {rating_str}"
         builder.row(
             CallbackButton(text=text, payload=f"{CB_SPECIALIST_PREFIX}{spec.id}")
+        )
+    return builder.as_markup()
+
+
+def services_keyboard(services: list[Service]) -> Attachment:
+    builder = InlineKeyboardBuilder()
+    for svc in services:
+        text = f"{svc.title} · {svc.price_rub}₽ · {svc.duration_minutes} мин"
+        builder.row(
+            CallbackButton(text=text, payload=f"{CB_SERVICE_PREFIX}{svc.id}")
         )
     return builder.as_markup()
 
@@ -146,59 +170,19 @@ def cancel_booking_keyboard(booking: Booking) -> Attachment:
     return builder.as_markup()
 
 
-# ---- Мастер ---------------------------------------------------------------
-
-def master_category_keyboard(prefix: str = CB_MASTER_CATEGORY_PREFIX) -> Attachment:
-    builder = InlineKeyboardBuilder()
-    for category in SpecialistCategory:
-        builder.row(
-            CallbackButton(
-                text=category.title_ru,
-                payload=f"{prefix}{category.value}",
-            )
-        )
-    return builder.as_markup()
-
-
-def master_skip_photo_keyboard() -> Attachment:
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        CallbackButton(text="Пропустить фото", payload=CB_MASTER_SKIP_PHOTO)
-    )
-    return builder.as_markup()
-
-
 # ---- Админ-панель --------------------------------------------------------
 
-def admin_panel_keyboard(pending_count: int = 0) -> Attachment:
+def admin_panel_keyboard() -> Attachment:
     builder = InlineKeyboardBuilder()
-    apps_text = (
-        f"Заявки мастеров ({pending_count})" if pending_count else "Заявки мастеров"
-    )
-    builder.row(CallbackButton(text=apps_text, payload=CB_ADMIN_APPLICATIONS))
     builder.row(
         CallbackButton(text="Добавить мастера", payload=CB_ADMIN_ADD),
-        CallbackButton(text="Удалить мастера", payload=CB_ADMIN_DELETE),
+        CallbackButton(text="Список мастеров", payload=CB_ADMIN_LIST),
     )
     builder.row(
         CallbackButton(text="Изменить данные", payload=CB_ADMIN_EDIT),
-        CallbackButton(text="Статистика", payload=CB_ADMIN_STATS),
+        CallbackButton(text="Удалить мастера", payload=CB_ADMIN_DELETE),
     )
-    return builder.as_markup()
-
-
-def application_actions_keyboard(application: MasterApplication) -> Attachment:
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        CallbackButton(
-            text="Одобрить",
-            payload=f"{CB_APP_APPROVE_PREFIX}{application.id}",
-        ),
-        CallbackButton(
-            text="Отклонить",
-            payload=f"{CB_APP_REJECT_PREFIX}{application.id}",
-        ),
-    )
+    builder.row(CallbackButton(text="Статистика", payload=CB_ADMIN_STATS))
     return builder.as_markup()
 
 
@@ -207,9 +191,10 @@ def admin_specialists_keyboard(
 ) -> Attachment:
     builder = InlineKeyboardBuilder()
     for spec in specialists:
+        marker = "" if spec.is_active else " 🚫"
         builder.row(
             CallbackButton(
-                text=f"{spec.category.title_ru} · {spec.full_name}",
+                text=f"{spec.category.title_ru} · {spec.full_name}{marker}",
                 payload=f"{action_prefix}{spec.id}",
             )
         )
@@ -217,19 +202,15 @@ def admin_specialists_keyboard(
 
 
 def admin_edit_fields_keyboard(specialist_id: int) -> Attachment:
-    """Список редактируемых полей мастера для админа."""
+    """Поля мастера, которые редактирует админ."""
     from .services.admins import SpecialistField  # локальный импорт против циклов
 
     fields_order = [
         SpecialistField.FIRST_NAME,
         SpecialistField.LAST_NAME,
         SpecialistField.CATEGORY,
-        SpecialistField.PRICE,
         SpecialistField.ADDRESS,
-        SpecialistField.DESCRIPTION,
-        SpecialistField.PHOTO,
-        SpecialistField.WORK_START,
-        SpecialistField.WORK_END,
+        SpecialistField.IS_ACTIVE,
     ]
     builder = InlineKeyboardBuilder()
     for field in fields_order:
@@ -251,4 +232,126 @@ def admin_categories_keyboard() -> Attachment:
                 payload=f"{CB_ADMIN_CAT_PREFIX}{category.value}",
             )
         )
+    return builder.as_markup()
+
+
+# ---- Кабинет мастера -----------------------------------------------------
+
+def cabinet_main_keyboard(specialist: Specialist) -> Attachment:
+    builder = InlineKeyboardBuilder()
+    builder.row(CallbackButton(text="Мои данные", payload=CB_CAB_PROFILE))
+    builder.row(
+        CallbackButton(
+            text=f"Мои услуги ({len(specialist.services)})",
+            payload=CB_CAB_SERVICES,
+        )
+    )
+    builder.row(CallbackButton(text="Моё расписание", payload=CB_CAB_SCHEDULE))
+    toggle_text = (
+        "Отключить кабинет (приём записей)"
+        if specialist.is_active
+        else "Включить кабинет (приём записей)"
+    )
+    builder.row(CallbackButton(text=toggle_text, payload=CB_CAB_TOGGLE_ACTIVE))
+    return builder.as_markup()
+
+
+def cabinet_back_keyboard() -> Attachment:
+    builder = InlineKeyboardBuilder()
+    builder.row(CallbackButton(text="« Назад в кабинет", payload=CB_CAB_BACK))
+    return builder.as_markup()
+
+
+def cabinet_profile_keyboard() -> Attachment:
+    """Поля профиля, которые редактирует сам мастер."""
+    fields = [
+        ("first_name", "Имя"),
+        ("last_name", "Фамилия"),
+        ("description", "Описание"),
+        ("phone", "Телефон"),
+        ("photo_url", "Фото (URL/изображение)"),
+        ("address", "Адрес"),
+    ]
+    builder = InlineKeyboardBuilder()
+    for field, label in fields:
+        builder.row(
+            CallbackButton(
+                text=label,
+                payload=f"{CB_CAB_PROFILE_FIELD_PREFIX}{field}",
+            )
+        )
+    builder.row(CallbackButton(text="« Назад", payload=CB_CAB_BACK))
+    return builder.as_markup()
+
+
+def cabinet_schedule_keyboard() -> Attachment:
+    fields = [
+        ("work_start_hour", "Начало рабочего дня (час 0..23)"),
+        ("work_end_hour", "Конец рабочего дня (час 0..23)"),
+    ]
+    builder = InlineKeyboardBuilder()
+    for field, label in fields:
+        builder.row(
+            CallbackButton(
+                text=label,
+                payload=f"{CB_CAB_SCHEDULE_FIELD_PREFIX}{field}",
+            )
+        )
+    builder.row(CallbackButton(text="« Назад", payload=CB_CAB_BACK))
+    return builder.as_markup()
+
+
+def cabinet_services_keyboard(services: list[Service]) -> Attachment:
+    builder = InlineKeyboardBuilder()
+    builder.row(CallbackButton(text="➕ Добавить услугу", payload=CB_CAB_SVC_NEW))
+    for svc in services:
+        marker = "" if svc.is_active else " 🚫"
+        text = f"{svc.title} · {svc.price_rub}₽{marker}"
+        builder.row(
+            CallbackButton(
+                text=text, payload=f"{CB_CAB_SVC_EDIT_PREFIX}{svc.id}"
+            )
+        )
+    builder.row(CallbackButton(text="« Назад", payload=CB_CAB_BACK))
+    return builder.as_markup()
+
+
+def cabinet_service_actions_keyboard(service: Service) -> Attachment:
+    """Действия над одной услугой: редактирование полей / включение / удаление."""
+    fields = [
+        ("title", "Название"),
+        ("price_rub", "Цена"),
+        ("duration_minutes", "Длительность"),
+        ("description", "Описание"),
+    ]
+    builder = InlineKeyboardBuilder()
+    for field, label in fields:
+        builder.row(
+            CallbackButton(
+                text=label,
+                payload=f"{CB_CAB_SVC_FIELD_PREFIX}{service.id}:{field}",
+            )
+        )
+    toggle_text = "Отключить" if service.is_active else "Включить"
+    builder.row(
+        CallbackButton(
+            text=toggle_text,
+            payload=f"{CB_CAB_SVC_TOGGLE_PREFIX}{service.id}",
+        ),
+        CallbackButton(
+            text="Удалить",
+            payload=f"{CB_CAB_SVC_DELETE_PREFIX}{service.id}",
+        ),
+    )
+    builder.row(CallbackButton(text="« К списку услуг", payload=CB_CAB_SERVICES))
+    return builder.as_markup()
+
+
+def cabinet_skip_description_keyboard() -> Attachment:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        CallbackButton(
+            text="Пропустить описание", payload=CB_CAB_SVC_SKIP_DESC
+        )
+    )
     return builder.as_markup()
