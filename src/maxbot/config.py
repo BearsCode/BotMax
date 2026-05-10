@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -33,7 +34,7 @@ class Settings(BaseSettings):
         description="Горизонт планирования свободных слотов в днях",
     )
     log_level: str = Field(default="INFO", description="Уровень логирования")
-    admin_user_ids: list[int] = Field(
+    admin_user_ids: Annotated[list[int], NoDecode] = Field(
         default_factory=list,
         description="Список MAX user_id администраторов",
     )
