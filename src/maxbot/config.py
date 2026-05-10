@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +33,21 @@ class Settings(BaseSettings):
         description="Горизонт планирования свободных слотов в днях",
     )
     log_level: str = Field(default="INFO", description="Уровень логирования")
+    admin_user_ids: list[int] = Field(
+        default_factory=list,
+        description="Список MAX user_id администраторов",
+    )
+
+    @field_validator("admin_user_ids", mode="before")
+    @classmethod
+    def _parse_admin_ids(cls, value: object) -> list[int]:
+        if value in (None, ""):
+            return []
+        if isinstance(value, list):
+            return [int(v) for v in value if str(v).strip()]
+        if isinstance(value, str):
+            return [int(part.strip()) for part in value.split(",") if part.strip()]
+        raise ValueError("ADMIN_USER_IDS должен быть строкой или списком")
 
 
 @lru_cache(maxsize=1)

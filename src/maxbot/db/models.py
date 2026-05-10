@@ -55,6 +55,14 @@ class BookingStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class MasterApplicationStatus(str, enum.Enum):
+    """Статус заявки мастера на добавление в каталог."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 class Client(Base):
     """Клиент, который записывается к специалисту."""
 
@@ -96,6 +104,7 @@ class Specialist(Base):
     price_rub: Mapped[int] = mapped_column(Integer, nullable=False)
     rating: Mapped[float] = mapped_column(Float, default=5.0, nullable=False)
     photo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     max_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     work_start_hour: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     work_end_hour: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
@@ -145,4 +154,49 @@ class Booking(Base):
         return (
             f"Booking(id={self.id}, client_id={self.client_id}, "
             f"specialist_id={self.specialist_id}, starts_at={self.starts_at.isoformat()})"
+        )
+
+
+class MasterApplication(Base):
+    """Заявка мастера на добавление в каталог."""
+
+    __tablename__ = "master_applications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    max_user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    max_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    first_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    last_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    photo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    category: Mapped[SpecialistCategory] = mapped_column(
+        Enum(SpecialistCategory, name="specialist_category"), nullable=False
+    )
+    price_rub: Mapped[int] = mapped_column(Integer, nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    address: Mapped[str] = mapped_column(String(256), nullable=False)
+    work_start_hour: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    work_end_hour: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
+    status: Mapped[MasterApplicationStatus] = mapped_column(
+        Enum(MasterApplicationStatus, name="master_application_status"),
+        default=MasterApplicationStatus.PENDING,
+        index=True,
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now, nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decided_by_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    specialist_id: Mapped[int | None] = mapped_column(
+        ForeignKey("specialists.id", ondelete="SET NULL"), nullable=True
+    )
+
+    @property
+    def full_name(self) -> str:
+        if self.last_name:
+            return f"{self.first_name} {self.last_name}".strip()
+        return self.first_name
+
+    def __repr__(self) -> str:
+        return (
+            f"MasterApplication(id={self.id}, max_user_id={self.max_user_id}, "
+            f"status={self.status.value})"
         )

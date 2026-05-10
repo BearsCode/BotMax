@@ -20,3 +20,33 @@ class BookingStates(StatesGroup):
     choosing_specialist = State()
     choosing_slot = State()
     confirming = State()
+
+
+class MasterStates(StatesGroup):
+    """Шаги мастера при подаче заявки в каталог."""
+
+    waiting_name = State()
+    waiting_photo = State()
+    waiting_category = State()
+    waiting_price = State()
+    waiting_description = State()
+    waiting_address = State()
+    waiting_schedule = State()
+
+
+class AdminAddStates(StatesGroup):
+    """Админ добавляет мастера вручную."""
+
+    waiting_name = State()
+    waiting_photo = State()
+    waiting_category = State()
+    waiting_price = State()
+    waiting_description = State()
+    waiting_address = State()
+    waiting_schedule = State()
+
+
+class AdminEditStates(StatesGroup):
+    """Админ редактирует данные существующего мастера."""
+
+    waiting_value = State()

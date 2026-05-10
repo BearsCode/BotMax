@@ -17,6 +17,7 @@ DEFAULT_SPECIALISTS: list[dict] = [
         "rating": 4.9,
         "work_start_hour": 10,
         "work_end_hour": 20,
+        "description": "Стрижки, окрашивание, укладки. Опыт работы 8 лет.",
     },
     {
         "category": SpecialistCategory.HAIRDRESSER,
@@ -27,6 +28,7 @@ DEFAULT_SPECIALISTS: list[dict] = [
         "rating": 4.7,
         "work_start_hour": 9,
         "work_end_hour": 19,
+        "description": "Стрижки и сложное окрашивание (балаяж, шатуш).",
     },
     {
         "category": SpecialistCategory.MAKEUP,
@@ -37,6 +39,7 @@ DEFAULT_SPECIALISTS: list[dict] = [
         "rating": 5.0,
         "work_start_hour": 11,
         "work_end_hour": 21,
+        "description": "Дневной и вечерний макияж, свадебный, фотосессии.",
     },
     {
         "category": SpecialistCategory.MAKEUP,
@@ -47,6 +50,7 @@ DEFAULT_SPECIALISTS: list[dict] = [
         "rating": 4.8,
         "work_start_hour": 10,
         "work_end_hour": 18,
+        "description": "Естественный макияж, оформление бровей.",
     },
     {
         "category": SpecialistCategory.MANICURE,
@@ -57,6 +61,7 @@ DEFAULT_SPECIALISTS: list[dict] = [
         "rating": 4.95,
         "work_start_hour": 10,
         "work_end_hour": 20,
+        "description": "Аппаратный маникюр, гель-лак, дизайн.",
     },
     {
         "category": SpecialistCategory.MANICURE,
@@ -67,6 +72,7 @@ DEFAULT_SPECIALISTS: list[dict] = [
         "rating": 4.6,
         "work_start_hour": 9,
         "work_end_hour": 18,
+        "description": "Маникюр и педикюр, наращивание, укрепление.",
     },
 ]
 
