@@ -92,6 +92,30 @@ async def get_active_bookings(
     return list(result.all())
 
 
+async def list_specialist_bookings(
+    session: AsyncSession,
+    specialist: Specialist,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    include_cancelled: bool = True,
+) -> list[Booking]:
+    """Записи к мастеру в указанном диапазоне (для раздела «Мои клиенты»)."""
+    stmt = select(Booking).where(Booking.specialist_id == specialist.id)
+    if start is not None:
+        stmt = stmt.where(Booking.starts_at >= start)
+    if end is not None:
+        stmt = stmt.where(Booking.starts_at < end)
+    if not include_cancelled:
+        stmt = stmt.where(Booking.status == BookingStatus.CONFIRMED)
+    stmt = stmt.options(
+        selectinload(Booking.client),
+        selectinload(Booking.service),
+    ).order_by(Booking.starts_at.asc())
+    result = await session.scalars(stmt)
+    return list(result.all())
+
+
 async def get_booking(
     session: AsyncSession, booking_id: int
 ) -> Booking | None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import enum
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import (
     BigInteger,
@@ -122,6 +122,11 @@ class Specialist(Base):
         cascade="all, delete-orphan",
         order_by="Service.id",
     )
+    time_slots: Mapped[list[TimeSlot]] = relationship(
+        back_populates="specialist",
+        cascade="all, delete-orphan",
+        order_by="TimeSlot.starts_at",
+    )
     bookings: Mapped[list[Booking]] = relationship(back_populates="specialist")
 
     @property
@@ -207,4 +212,46 @@ class Booking(Base):
         return (
             f"Booking(id={self.id}, client_id={self.client_id}, "
             f"specialist_id={self.specialist_id}, starts_at={self.starts_at.isoformat()})"
+        )
+
+
+class TimeSlot(Base):
+    """Явный временной слот мастера.
+
+    Если у мастера есть хотя бы один явный слот, бот предлагает
+    клиенту только эти слоты. Иначе работает fallback на рабочие
+    часы `work_start_hour..work_end_hour`.
+    """
+
+    __tablename__ = "time_slots"
+    __table_args__ = (
+        UniqueConstraint(
+            "specialist_id", "starts_at", name="uq_time_slot_specialist_time"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    specialist_id: Mapped[int] = mapped_column(
+        ForeignKey("specialists.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    starts_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    duration_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    is_blocked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utc_now, nullable=False
+    )
+
+    specialist: Mapped[Specialist] = relationship(back_populates="time_slots")
+
+    @property
+    def ends_at(self) -> datetime:
+        return self.starts_at + timedelta(minutes=self.duration_minutes)
+
+    def __repr__(self) -> str:
+        return (
+            f"TimeSlot(id={self.id}, specialist_id={self.specialist_id}, "
+            f"starts_at={self.starts_at.isoformat()}, "
+            f"duration_minutes={self.duration_minutes}, is_blocked={self.is_blocked})"
         )

@@ -52,3 +52,7 @@ class CabinetStates(StatesGroup):
     creating_service_description = State()
     editing_service_value = State()
     editing_schedule_value = State()
+    # Пакетное добавление слотов: дата → начало/конец → длительность.
+    sched_pick_day = State()
+    sched_pick_range = State()
+    sched_pick_duration = State()

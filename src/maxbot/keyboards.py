@@ -11,7 +11,13 @@ from maxapi.types import (
 )
 from maxapi.utils.inline_keyboard import InlineKeyboardBuilder
 
-from .db.models import Booking, Service, Specialist, SpecialistCategory
+from .db.models import (
+    Booking,
+    Service,
+    Specialist,
+    SpecialistCategory,
+    TimeSlot,
+)
 
 # ---- Префиксы payload'ов callback-кнопок -----------------------------------
 
@@ -44,11 +50,31 @@ CB_ADMIN_CAT_PREFIX = "acat:"  # выбор категории при созда
 CB_CAB_PROFILE = "cab:profile"
 CB_CAB_SERVICES = "cab:services"
 CB_CAB_SCHEDULE = "cab:schedule"
+CB_CAB_CLIENTS = "cab:clients"
 CB_CAB_TOGGLE_ACTIVE = "cab:toggle"
 CB_CAB_BACK = "cab:back"
 
+# Мои клиенты
+CB_CAB_CLIENTS_TODAY = "cab:cltoday"
+CB_CAB_CLIENTS_TOMORROW = "cab:cltmrw"
+CB_CAB_CLIENTS_ALL = "cab:clall"
+
+# Расписание: рабочие часы + слоты
+CB_CAB_SCHED_HOURS = "cab:schhours"
+CB_CAB_SCHED_DAY_TODAY = "cab:schdayt"
+CB_CAB_SCHED_DAY_TOMORROW = "cab:schdaytmrw"
+CB_CAB_SCHED_WEEK = "cab:schweek"
+CB_CAB_SCHED_ADD = "cab:schadd"
+CB_CAB_SLOT_ACTIONS_PREFIX = "cabsl:"  # cabsl:<slot_id>
+CB_CAB_SLOT_BLOCK_PREFIX = "cabslb:"  # cabslb:<slot_id>
+CB_CAB_SLOT_UNBLOCK_PREFIX = "cabslu:"  # cabslu:<slot_id>
+CB_CAB_SLOT_DELETE_PREFIX = "cabsld:"  # cabsld:<slot_id>
+CB_CAB_SCHED_DURATION_PREFIX = "cabsdur:"  # cabsdur:<minutes>
+CB_CAB_SCHED_DAY_PICK_PREFIX = "cabsdp:"  # cabsdp:<YYYY-MM-DD>
+
 CB_CAB_PROFILE_FIELD_PREFIX = "cpf:"  # cpf:<field>
 CB_CAB_SCHEDULE_FIELD_PREFIX = "csf:"  # csf:<field>
+CB_CAB_HOURS_FIELD_PREFIX = "chf:"  # chf:<field> (для рабочих часов)
 
 CB_CAB_SVC_NEW = "csvc:new"
 CB_CAB_SVC_EDIT_PREFIX = "csvce:"  # csvce:<service_id>
@@ -247,6 +273,7 @@ def cabinet_main_keyboard(specialist: Specialist) -> Attachment:
         )
     )
     builder.row(CallbackButton(text="Моё расписание", payload=CB_CAB_SCHEDULE))
+    builder.row(CallbackButton(text="Мои клиенты", payload=CB_CAB_CLIENTS))
     toggle_text = (
         "Отключить кабинет (приём записей)"
         if specialist.is_active
@@ -285,6 +312,28 @@ def cabinet_profile_keyboard() -> Attachment:
 
 
 def cabinet_schedule_keyboard() -> Attachment:
+    """Главное меню раздела «Моё расписание»."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        CallbackButton(text="На сегодня", payload=CB_CAB_SCHED_DAY_TODAY),
+        CallbackButton(text="На завтра", payload=CB_CAB_SCHED_DAY_TOMORROW),
+    )
+    builder.row(CallbackButton(text="На неделю", payload=CB_CAB_SCHED_WEEK))
+    builder.row(
+        CallbackButton(text="➕ Добавить слоты", payload=CB_CAB_SCHED_ADD)
+    )
+    builder.row(
+        CallbackButton(
+            text="Рабочие часы (fallback)",
+            payload=CB_CAB_SCHED_HOURS,
+        )
+    )
+    builder.row(CallbackButton(text="« Назад", payload=CB_CAB_BACK))
+    return builder.as_markup()
+
+
+def cabinet_hours_keyboard() -> Attachment:
+    """Подменю редактирования рабочих часов."""
     fields = [
         ("work_start_hour", "Начало рабочего дня (час 0..23)"),
         ("work_end_hour", "Конец рабочего дня (час 0..23)"),
@@ -297,7 +346,128 @@ def cabinet_schedule_keyboard() -> Attachment:
                 payload=f"{CB_CAB_SCHEDULE_FIELD_PREFIX}{field}",
             )
         )
+    builder.row(
+        CallbackButton(text="« Назад к расписанию", payload=CB_CAB_SCHEDULE)
+    )
+    return builder.as_markup()
+
+
+def cabinet_clients_filter_keyboard() -> Attachment:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        CallbackButton(text="Сегодня", payload=CB_CAB_CLIENTS_TODAY),
+        CallbackButton(text="Завтра", payload=CB_CAB_CLIENTS_TOMORROW),
+    )
+    builder.row(
+        CallbackButton(text="Все будущие", payload=CB_CAB_CLIENTS_ALL)
+    )
     builder.row(CallbackButton(text="« Назад", payload=CB_CAB_BACK))
+    return builder.as_markup()
+
+
+_DURATION_PRESETS: list[int] = [30, 45, 60, 90, 120]
+
+
+def cabinet_duration_keyboard() -> Attachment:
+    """Выбор длительности слота при пакетном добавлении."""
+    builder = InlineKeyboardBuilder()
+    row: list[CallbackButton] = []
+    for minutes in _DURATION_PRESETS:
+        row.append(
+            CallbackButton(
+                text=f"{minutes} мин",
+                payload=f"{CB_CAB_SCHED_DURATION_PREFIX}{minutes}",
+            )
+        )
+        if len(row) == 3:
+            builder.row(*row)
+            row = []
+    if row:
+        builder.row(*row)
+    builder.row(CallbackButton(text="« Отмена", payload=CB_CAB_SCHEDULE))
+    return builder.as_markup()
+
+
+def cabinet_day_picker_keyboard(days_ahead: int = 14) -> Attachment:
+    """Выбор даты из ближайших 14 дней."""
+    from datetime import date, timedelta
+
+    today = date.today()
+    builder = InlineKeyboardBuilder()
+    weekdays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    row: list[CallbackButton] = []
+    for offset in range(days_ahead):
+        day = today + timedelta(days=offset)
+        if offset == 0:
+            label = f"Сегодня {day:%d.%m}"
+        elif offset == 1:
+            label = f"Завтра {day:%d.%m}"
+        else:
+            label = f"{weekdays[day.weekday()]} {day:%d.%m}"
+        row.append(
+            CallbackButton(
+                text=label,
+                payload=f"{CB_CAB_SCHED_DAY_PICK_PREFIX}{day.isoformat()}",
+            )
+        )
+        if len(row) == 2:
+            builder.row(*row)
+            row = []
+    if row:
+        builder.row(*row)
+    builder.row(CallbackButton(text="« Отмена", payload=CB_CAB_SCHEDULE))
+    return builder.as_markup()
+
+
+def cabinet_slot_actions_keyboard(slot: TimeSlot) -> Attachment:
+    """Действия над слотом: блокировка / разблокировка / удаление."""
+    builder = InlineKeyboardBuilder()
+    if slot.is_blocked:
+        builder.row(
+            CallbackButton(
+                text="Разблокировать",
+                payload=f"{CB_CAB_SLOT_UNBLOCK_PREFIX}{slot.id}",
+            )
+        )
+    else:
+        builder.row(
+            CallbackButton(
+                text="Заблокировать",
+                payload=f"{CB_CAB_SLOT_BLOCK_PREFIX}{slot.id}",
+            )
+        )
+    builder.row(
+        CallbackButton(
+            text="Удалить",
+            payload=f"{CB_CAB_SLOT_DELETE_PREFIX}{slot.id}",
+        )
+    )
+    builder.row(
+        CallbackButton(text="« К расписанию", payload=CB_CAB_SCHEDULE)
+    )
+    return builder.as_markup()
+
+
+def cabinet_slot_list_keyboard(
+    items: list[tuple[TimeSlot, str]],
+) -> Attachment:
+    """Список слотов: каждый слот — отдельная кнопка в формате `лябл -> слот`."""
+    builder = InlineKeyboardBuilder()
+    for slot, label in items:
+        builder.row(
+            CallbackButton(
+                text=label,
+                payload=f"{CB_CAB_SLOT_ACTIONS_PREFIX}{slot.id}",
+            )
+        )
+    builder.row(
+        CallbackButton(
+            text="➕ Добавить слоты", payload=CB_CAB_SCHED_ADD
+        )
+    )
+    builder.row(
+        CallbackButton(text="« К расписанию", payload=CB_CAB_SCHEDULE)
+    )
     return builder.as_markup()
 
 

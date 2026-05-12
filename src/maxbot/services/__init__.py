@@ -15,6 +15,7 @@ from .bookings import (
     create_booking,
     get_active_bookings,
     get_booking,
+    list_specialist_bookings,
 )
 from .clients import (
     create_or_update_client,
@@ -41,6 +42,16 @@ from .specialists import (
     specialist_min_price,
 )
 from .stats import StatsSnapshot, TopSpecialistRow, collect_stats, format_stats
+from .time_slots import (
+    TimeSlotOverlapError,
+    create_time_slot,
+    create_time_slots_bulk,
+    delete_time_slot,
+    get_time_slot,
+    has_any_time_slots,
+    list_time_slots,
+    set_time_slot_blocked,
+)
 
 __all__ = [
     "BookingConflictError",
@@ -49,6 +60,7 @@ __all__ = [
     "SlotInPastError",
     "SpecialistField",
     "StatsSnapshot",
+    "TimeSlotOverlapError",
     "TopSpecialistRow",
     "add_specialist",
     "cancel_booking",
@@ -56,8 +68,11 @@ __all__ = [
     "create_booking",
     "create_or_update_client",
     "create_service",
+    "create_time_slot",
+    "create_time_slots_bulk",
     "delete_service",
     "delete_specialist",
+    "delete_time_slot",
     "format_stats",
     "generate_available_slots",
     "get_active_bookings",
@@ -67,15 +82,20 @@ __all__ = [
     "get_specialist",
     "get_specialist_by_max_user_id",
     "get_specialist_by_user_id",
+    "get_time_slot",
     "has_active_service",
+    "has_any_time_slots",
     "is_admin",
     "list_all_specialists",
     "list_services",
+    "list_specialist_bookings",
     "list_specialists_by_category",
+    "list_time_slots",
     "min_price_for",
     "set_birth_date",
     "set_city",
     "set_phone",
+    "set_time_slot_blocked",
     "specialist_min_price",
     "update_service_field",
     "update_specialist_field",

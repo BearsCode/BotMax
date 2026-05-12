@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 from maxapi import Bot, F, Router
 from maxapi.context import MemoryContext
 from maxapi.types import MessageCallback
@@ -90,8 +92,26 @@ async def on_cancel_booking(
         if client is None:
             return
 
+        # Немедленное уведомление мастеру: клиент отменил запись.
+        spec = booking.specialist
+        if spec.max_user_id:
+            client_label = client.first_name
+            if client.last_name:
+                client_label = f"{client_label} {client.last_name}"
+            with contextlib.suppress(Exception):
+                await callback.bot.send_message(
+                    user_id=spec.max_user_id,
+                    text=(
+                        "Отмена записи ⚠️\n"
+                        f"Клиент: {client_label}\n"
+                        f"Телефон: {client.phone}\n"
+                        f"Услуга: {booking.service.title}\n"
+                        f"Время: {format_slot(booking.starts_at)}"
+                    ),
+                )
+
     await callback.bot.send_message(
         chat_id=chat_id,
-        text=f"Запись на {format_slot(booking.starts_at)} отменена.",
+        text=f"Запись на {format_slot(booking.starts_at)} отменена.\nМастер уведомлён.",
         attachments=[main_menu_keyboard()],
     )
