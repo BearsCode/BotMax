@@ -34,6 +34,14 @@ class Settings(BaseSettings):
         description="Горизонт планирования свободных слотов в днях",
     )
     log_level: str = Field(default="INFO", description="Уровень логирования")
+    scheduler_interval_seconds: int = Field(
+        default=60,
+        ge=10,
+        le=3600,
+        description=(
+            "Период тика фонового планировщика напоминаний и просьб об отзыве"
+        ),
+    )
     admin_user_ids: Annotated[list[int], NoDecode] = Field(
         default_factory=list,
         description="Список MAX user_id администраторов",

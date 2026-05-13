@@ -4,7 +4,17 @@ from __future__ import annotations
 
 from maxapi import Dispatcher
 
-from . import admin, auth, booking, cabinet, common, menu, my_bookings
+from . import (
+    admin,
+    auth,
+    booking,
+    cabinet,
+    common,
+    menu,
+    my_bookings,
+    reschedule,
+    reviews,
+)
 
 
 def register_routers(dp: Dispatcher) -> None:
@@ -17,4 +27,6 @@ def register_routers(dp: Dispatcher) -> None:
         menu.router,
         booking.router,
         my_bookings.router,
+        reschedule.router,
+        reviews.router,
     )

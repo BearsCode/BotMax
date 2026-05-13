@@ -56,3 +56,9 @@ class CabinetStates(StatesGroup):
     sched_pick_day = State()
     sched_pick_range = State()
     sched_pick_duration = State()
+
+
+class ReviewStates(StatesGroup):
+    """Сценарий оставления отзыва клиентом после визита."""
+
+    waiting_comment = State()

@@ -255,3 +255,88 @@ class TimeSlot(Base):
             f"starts_at={self.starts_at.isoformat()}, "
             f"duration_minutes={self.duration_minutes}, is_blocked={self.is_blocked})"
         )
+
+
+class ReminderKind(str, enum.Enum):
+    """Вид напоминания клиенту."""
+
+    DAY_BEFORE = "day_before"
+    HOUR_BEFORE = "hour_before"
+    REVIEW_REQUEST = "review_request"
+
+
+class SentReminder(Base):
+    """Запись о том, что напоминание/просьба об отзыве уже отправлены.
+
+    Используется как идемпотентный маркер, чтобы планировщик не отправил
+    одно и то же уведомление повторно.
+    """
+
+    __tablename__ = "sent_reminders"
+    __table_args__ = (
+        UniqueConstraint(
+            "booking_id", "kind", name="uq_sent_reminder_booking_kind"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    booking_id: Mapped[int] = mapped_column(
+        ForeignKey("bookings.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    kind: Mapped[ReminderKind] = mapped_column(
+        Enum(ReminderKind, name="reminder_kind"), nullable=False
+    )
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utc_now, nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"SentReminder(id={self.id}, booking_id={self.booking_id}, "
+            f"kind={self.kind.value}, sent_at={self.sent_at.isoformat()})"
+        )
+
+
+class Review(Base):
+    """Отзыв клиента о записи: оценка 1..5 и опциональный текст."""
+
+    __tablename__ = "reviews"
+    __table_args__ = (
+        UniqueConstraint(
+            "booking_id", name="uq_review_booking"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    booking_id: Mapped[int] = mapped_column(
+        ForeignKey("bookings.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    specialist_id: Mapped[int] = mapped_column(
+        ForeignKey("specialists.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    client_id: Mapped[int] = mapped_column(
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)  # 1..5
+    text: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utc_now, nullable=False
+    )
+
+    booking: Mapped[Booking] = relationship()
+    specialist: Mapped[Specialist] = relationship()
+    client: Mapped[Client] = relationship()
+
+    def __repr__(self) -> str:
+        return (
+            f"Review(id={self.id}, booking_id={self.booking_id}, "
+            f"rating={self.rating})"
+        )

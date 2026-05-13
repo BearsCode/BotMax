@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 
 from maxapi import Bot, Dispatcher
@@ -11,6 +13,7 @@ from .db import db_session, init_engine
 from .db.seed import ensure_seed_specialists
 from .db.session import create_all
 from .handlers import register_routers
+from .scheduler import run_scheduler
 
 
 def configure_logging(level: str) -> None:
@@ -50,7 +53,13 @@ async def run(settings: Settings | None = None) -> None:
 
     log = logging.getLogger(__name__)
     log.info("Запуск MAX-бота (long polling)…")
+    scheduler_task = asyncio.create_task(
+        run_scheduler(bot, interval_seconds=settings.scheduler_interval_seconds)
+    )
     try:
         await dp.start_polling(bot)
     finally:
+        scheduler_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await scheduler_task
         await bot.close_session()

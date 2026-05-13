@@ -33,6 +33,14 @@ CB_CONFIRM = "book:confirm"
 CB_CANCEL = "book:cancel"
 
 CB_CANCEL_BOOKING_PREFIX = "cancelb:"
+CB_RESCHEDULE_BOOKING_PREFIX = "rsched:"  # rsched:<booking_id>
+CB_RESCHEDULE_SLOT_PREFIX = "rsslot:"  # rsslot:<booking_id>:<ts>
+CB_RESCHEDULE_CANCEL = "rsched:cancel"
+
+# Отзывы
+CB_REVIEW_RATE_PREFIX = "rvr:"  # rvr:<booking_id>:<rating>
+CB_REVIEW_SKIP_TEXT_PREFIX = "rvskip:"  # rvskip:<booking_id>
+CB_REVIEW_DISMISS_PREFIX = "rvdis:"  # rvdis:<booking_id>
 
 # Админ-панель
 CB_ADMIN_ADD = "admin:add"
@@ -189,8 +197,65 @@ def cancel_booking_keyboard(booking: Booking) -> Attachment:
     builder = InlineKeyboardBuilder()
     builder.row(
         CallbackButton(
-            text="Отменить запись",
+            text="Перенести",
+            payload=f"{CB_RESCHEDULE_BOOKING_PREFIX}{booking.id}",
+        ),
+        CallbackButton(
+            text="Отменить",
             payload=f"{CB_CANCEL_BOOKING_PREFIX}{booking.id}",
+        ),
+    )
+    return builder.as_markup()
+
+
+def reschedule_slots_keyboard(
+    booking_id: int, slots: list[datetime], *, max_buttons: int = 12
+) -> Attachment:
+    """Слоты для переноса записи."""
+    builder = InlineKeyboardBuilder()
+    for slot in slots[:max_buttons]:
+        builder.row(
+            CallbackButton(
+                text=format_slot(slot),
+                payload=f"{CB_RESCHEDULE_SLOT_PREFIX}{booking_id}:{int(slot.timestamp())}",
+            )
+        )
+    builder.row(
+        CallbackButton(text="« Отмена", payload=CB_RESCHEDULE_CANCEL)
+    )
+    return builder.as_markup()
+
+
+# ---- Отзывы --------------------------------------------------------
+
+def review_rating_keyboard(booking_id: int) -> Attachment:
+    """Кнопки 1―5 звёзд + «Пропустить»."""
+    builder = InlineKeyboardBuilder()
+    row: list[CallbackButton] = []
+    for rating in range(1, 6):
+        row.append(
+            CallbackButton(
+                text="⭐" * rating,
+                payload=f"{CB_REVIEW_RATE_PREFIX}{booking_id}:{rating}",
+            )
+        )
+    builder.row(*row[:3])
+    builder.row(*row[3:])
+    builder.row(
+        CallbackButton(
+            text="Не оценивать",
+            payload=f"{CB_REVIEW_DISMISS_PREFIX}{booking_id}",
+        )
+    )
+    return builder.as_markup()
+
+
+def review_skip_text_keyboard(booking_id: int) -> Attachment:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        CallbackButton(
+            text="Пропустить комментарий",
+            payload=f"{CB_REVIEW_SKIP_TEXT_PREFIX}{booking_id}",
         )
     )
     return builder.as_markup()

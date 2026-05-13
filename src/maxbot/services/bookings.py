@@ -67,6 +67,34 @@ async def cancel_booking(
     return booking
 
 
+async def reschedule_booking(
+    session: AsyncSession,
+    booking: Booking,
+    *,
+    new_starts_at: datetime,
+    now: datetime | None = None,
+) -> Booking:
+    """Атомарно переносит запись на новый слот.
+
+    Если новый слот совпадает с уже занятым этим же мастером — бросает
+    :class:`BookingConflictError`. Если слот в прошлом — :class:`SlotInPastError`.
+    """
+    current_time = now or datetime.now()
+    if new_starts_at <= current_time:
+        raise SlotInPastError("Нельзя перенести запись на прошедшее время")
+    if booking.status != BookingStatus.CONFIRMED:
+        raise ValueError("Можно переносить только активные записи")
+
+    booking.starts_at = new_starts_at
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise BookingConflictError("Слот уже занят") from exc
+    await session.refresh(booking)
+    return booking
+
+
 async def get_active_bookings(
     session: AsyncSession,
     client: Client,
