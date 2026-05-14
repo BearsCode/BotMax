@@ -1,4 +1,4 @@
-"""Поток записи: категория → специалист → время → подтверждение."""
+"""Поток записи клиента: категория → мастер → услуга → слот → подтверждение."""
 
 from __future__ import annotations
 
@@ -16,11 +16,13 @@ from ..keyboards import (
     CB_CANCEL,
     CB_CATEGORY_PREFIX,
     CB_CONFIRM,
+    CB_SERVICE_PREFIX,
     CB_SLOT_PREFIX,
     CB_SPECIALIST_PREFIX,
     confirm_keyboard,
     format_slot,
     main_menu_keyboard,
+    services_keyboard,
     slots_keyboard,
     specialists_keyboard,
 )
@@ -29,8 +31,10 @@ from ..services import (
     create_booking,
     generate_available_slots,
     get_client_by_max_user_id,
+    get_service,
     get_specialist,
     list_specialists_by_category,
+    specialist_min_price,
 )
 from ..states import BookingStates
 from .common import MAIN_MENU_TEXT
@@ -38,17 +42,20 @@ from .common import MAIN_MENU_TEXT
 router = Router(router_id="booking")
 
 
-def _format_specialist_card(spec: Specialist) -> str:
+def _format_specialist_card(spec: Specialist, min_price: int | None) -> str:
     rating_str = f"{spec.rating:.1f}".rstrip("0").rstrip(".") or "0"
+    price_line = f"💰 от {min_price}₽" if min_price else "💰 услуги ещё не указаны"
     return (
         f"{spec.full_name}\n"
         f"📍 {spec.address}\n"
-        f"💰 {spec.price_rub}₽\n"
+        f"{price_line}\n"
         f"⭐ {rating_str}"
     )
 
 
-@router.message_callback(F.callback.payload.func(lambda v: bool(v) and v.startswith(CB_CATEGORY_PREFIX)))
+@router.message_callback(
+    F.callback.payload.func(lambda v: bool(v) and v.startswith(CB_CATEGORY_PREFIX))
+)
 async def on_category_chosen(
     callback: MessageCallback, context: MemoryContext
 ) -> None:
@@ -61,12 +68,17 @@ async def on_category_chosen(
         return
 
     async with db_session() as session:
-        specialists = await list_specialists_by_category(session, category)
+        specialists = await list_specialists_by_category(
+            session, category, only_bookable=True
+        )
 
     if not specialists:
         await callback.bot.send_message(
             chat_id=chat_id,
-            text="К сожалению, в этой категории пока нет специалистов.",
+            text=(
+                "К сожалению, в этой категории пока нет мастеров, готовых "
+                "принимать записи."
+            ),
             attachments=[main_menu_keyboard()],
         )
         return
@@ -74,20 +86,25 @@ async def on_category_chosen(
     await context.set_state(BookingStates.choosing_specialist)
     await context.update_data(category=category.value)
 
+    items: list[tuple[Specialist, int | None]] = [
+        (spec, specialist_min_price(spec)) for spec in specialists
+    ]
     text_lines = [f"Список специалистов — {category.title_ru}:", ""]
-    for spec in specialists:
-        text_lines.append(_format_specialist_card(spec))
+    for spec, min_price in items:
+        text_lines.append(_format_specialist_card(spec, min_price))
         text_lines.append("")
     text = "\n".join(text_lines).strip()
 
     await callback.bot.send_message(
         chat_id=chat_id,
         text=text,
-        attachments=[specialists_keyboard(specialists)],
+        attachments=[specialists_keyboard(items)],
     )
 
 
-@router.message_callback(F.callback.payload.func(lambda v: bool(v) and v.startswith(CB_SPECIALIST_PREFIX)))
+@router.message_callback(
+    F.callback.payload.func(lambda v: bool(v) and v.startswith(CB_SPECIALIST_PREFIX))
+)
 async def on_specialist_chosen(
     callback: MessageCallback, context: MemoryContext
 ) -> None:
@@ -98,41 +115,107 @@ async def on_specialist_chosen(
     except ValueError:
         return
 
-    settings = get_settings()
     async with db_session() as session:
         specialist = await get_specialist(session, specialist_id)
+        if specialist is None or not specialist.is_active:
+            await callback.bot.send_message(
+                chat_id=chat_id,
+                text="Мастер не найден или не принимает записи.",
+                attachments=[main_menu_keyboard()],
+            )
+            return
+        active_services = [s for s in specialist.services if s.is_active]
+
+    if not active_services:
+        await callback.bot.send_message(
+            chat_id=chat_id,
+            text="У мастера ещё не настроены услуги. Попробуйте позже.",
+            attachments=[main_menu_keyboard()],
+        )
+        return
+
+    await context.set_state(BookingStates.choosing_service)
+    await context.update_data(specialist_id=specialist.id)
+
+    description = specialist.description or ""
+    text_lines = [
+        f"Мастер: {specialist.full_name}",
+        f"📍 {specialist.address}",
+    ]
+    if specialist.phone:
+        text_lines.append(f"☎️ {specialist.phone}")
+    if description:
+        text_lines.append("")
+        text_lines.append(description)
+    text_lines.append("")
+    text_lines.append("Выберите услугу:")
+
+    await callback.bot.send_message(
+        chat_id=chat_id,
+        text="\n".join(text_lines),
+        attachments=[services_keyboard(active_services)],
+    )
+
+
+@router.message_callback(
+    F.callback.payload.func(lambda v: bool(v) and v.startswith(CB_SERVICE_PREFIX))
+)
+async def on_service_chosen(
+    callback: MessageCallback, context: MemoryContext
+) -> None:
+    chat_id, _ = callback.get_ids()
+    raw = callback.callback.payload or ""
+    try:
+        service_id = int(raw[len(CB_SERVICE_PREFIX) :])
+    except ValueError:
+        return
+
+    settings = get_settings()
+    async with db_session() as session:
+        service = await get_service(session, service_id)
+        if service is None or not service.is_active:
+            await callback.bot.send_message(
+                chat_id=chat_id,
+                text="Услуга не найдена. Начнём заново.",
+                attachments=[main_menu_keyboard()],
+            )
+            return
+        specialist = await get_specialist(session, service.specialist_id)
         if specialist is None:
             await callback.bot.send_message(
                 chat_id=chat_id,
-                text="Специалист не найден. Начнём заново.",
+                text="Мастер не найден.",
                 attachments=[main_menu_keyboard()],
             )
             return
         slots = await generate_available_slots(
             session,
             specialist,
+            service,
             horizon_days=settings.slot_horizon_days,
         )
 
     if not slots:
         await callback.bot.send_message(
             chat_id=chat_id,
-            text="К сожалению, у этого специалиста сейчас нет свободных слотов.",
+            text="Сейчас нет свободных слотов на эту услугу.",
             attachments=[main_menu_keyboard()],
         )
         return
 
     await context.set_state(BookingStates.choosing_slot)
-    await context.update_data(specialist_id=specialist.id)
+    await context.update_data(specialist_id=specialist.id, service_id=service.id)
 
     await callback.bot.send_message(
         chat_id=chat_id,
-        text=f"Доступное время — {specialist.full_name}",
+        text=f"Доступное время — {service.title} ({service.duration_minutes} мин)",
         attachments=[slots_keyboard(slots)],
     )
 
 
-@router.message_callback(F.callback.payload.func(lambda v: bool(v) and v.startswith(CB_SLOT_PREFIX)))
+@router.message_callback(
+    F.callback.payload.func(lambda v: bool(v) and v.startswith(CB_SLOT_PREFIX))
+)
 async def on_slot_chosen(
     callback: MessageCallback, context: MemoryContext
 ) -> None:
@@ -146,7 +229,8 @@ async def on_slot_chosen(
 
     data = await context.get_data()
     specialist_id = data.get("specialist_id")
-    if not specialist_id:
+    service_id = data.get("service_id")
+    if not specialist_id or not service_id:
         await callback.bot.send_message(
             chat_id=chat_id,
             text="Сессия записи устарела. Начнём заново.",
@@ -156,10 +240,11 @@ async def on_slot_chosen(
 
     async with db_session() as session:
         specialist = await get_specialist(session, int(specialist_id))
-        if specialist is None:
+        service = await get_service(session, int(service_id))
+        if specialist is None or service is None:
             await callback.bot.send_message(
                 chat_id=chat_id,
-                text="Специалист не найден.",
+                text="Мастер или услуга не найдены.",
                 attachments=[main_menu_keyboard()],
             )
             return
@@ -169,11 +254,12 @@ async def on_slot_chosen(
 
     text = (
         "Подтверждение записи\n\n"
-        f"• Специалист: {specialist.full_name}\n"
+        f"• Мастер: {specialist.full_name}\n"
         f"• Категория: {specialist.category.title_ru}\n"
+        f"• Услуга: {service.title} ({service.duration_minutes} мин)\n"
         f"• Адрес: {specialist.address}\n"
         f"• Дата и время: {format_slot(starts_at)}\n"
-        f"• Стоимость: {specialist.price_rub}₽"
+        f"• Стоимость: {service.price_rub}₽"
     )
 
     await callback.bot.send_message(
@@ -203,8 +289,9 @@ async def on_booking_confirm(
     chat_id, user_id = callback.get_ids()
     data = await context.get_data()
     specialist_id = data.get("specialist_id")
+    service_id = data.get("service_id")
     starts_at_ts = data.get("starts_at_ts")
-    if not specialist_id or not starts_at_ts:
+    if not specialist_id or not service_id or not starts_at_ts:
         await callback.bot.send_message(
             chat_id=chat_id,
             text="Сессия записи устарела. Начнём заново.",
@@ -218,7 +305,8 @@ async def on_booking_confirm(
     async with db_session() as session:
         client = await get_client_by_max_user_id(session, user_id)
         specialist = await get_specialist(session, int(specialist_id))
-        if client is None or specialist is None:
+        service = await get_service(session, int(service_id))
+        if client is None or specialist is None or service is None:
             await callback.bot.send_message(
                 chat_id=chat_id,
                 text="Не удалось найти данные. Попробуйте /start.",
@@ -226,10 +314,11 @@ async def on_booking_confirm(
             await context.clear()
             return
         try:
-            booking = await create_booking(
+            await create_booking(
                 session,
                 client=client,
                 specialist=specialist,
+                service=service,
                 starts_at=starts_at,
             )
         except BookingConflictError:
@@ -241,7 +330,6 @@ async def on_booking_confirm(
             await context.clear()
             return
 
-        # Уведомление специалисту, если у него привязан max_user_id
         if specialist.max_user_id:
             with contextlib.suppress(Exception):
                 await callback.bot.send_message(
@@ -250,6 +338,7 @@ async def on_booking_confirm(
                         f"Новая запись ✔\n"
                         f"Клиент: {client.first_name}\n"
                         f"Телефон: {client.phone}\n"
+                        f"Услуга: {service.title}\n"
                         f"Время: {format_slot(starts_at)}"
                     ),
                 )
@@ -260,9 +349,10 @@ async def on_booking_confirm(
         text=(
             f"Вы успешно записаны ✔\n\n"
             f"• {specialist.category.title_ru} — {specialist.full_name}\n"
+            f"• {service.title} ({service.duration_minutes} мин)\n"
             f"• {format_slot(starts_at)}\n"
             f"• {specialist.address}\n\n"
-            f"Уведомление отправлено специалисту."
+            f"Уведомление отправлено мастеру."
         ),
     )
     await callback.bot.send_message(
@@ -270,5 +360,3 @@ async def on_booking_confirm(
         text=MAIN_MENU_TEXT,
         attachments=[main_menu_keyboard()],
     )
-
-    _ = booking  # переменная нужна для отладки/расширения
