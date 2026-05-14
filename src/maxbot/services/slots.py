@@ -39,9 +39,12 @@ async def generate_available_slots(
 ) -> list[datetime]:
     """Свободные слоты мастера для указанной услуги на ближайшие `horizon_days`.
 
-    Если у мастера есть хотя бы один явный TimeSlot, используется только
-    они (с учётом блокировок и записей). Иначе fallback: рабочие часы и
-    длительность услуги.
+    Логика:
+    1. Если у мастера есть «явные» TimeSlot с ``is_blocked=False`` —
+       используются только они (минус подтверждённые записи).
+    2. Иначе используется fallback: сетка по рабочим часам с шагом услуги,
+       минус слоты с ``is_blocked=True`` (отключенные мастером)
+       и минус подтверждённые записи.
     """
     if horizon_days <= 0:
         return []
@@ -54,7 +57,7 @@ async def generate_available_slots(
         (now + timedelta(days=horizon_days)).date(), datetime.min.time()
     )
 
-    # 1) Если у мастера заданы явные TimeSlot — берём только их.
+    # 1) Явные «включённые» слоты (созданные пакетным добавлением).
     explicit_stmt = (
         select(TimeSlot)
         .where(
@@ -66,18 +69,9 @@ async def generate_available_slots(
         )
         .order_by(TimeSlot.starts_at.asc())
     )
-    explicit_rows = (await session.scalars(explicit_stmt)).all()
+    explicit_rows = list((await session.scalars(explicit_stmt)).all())
 
-    has_any_stmt = (
-        select(TimeSlot.id)
-        .where(TimeSlot.specialist_id == specialist.id)
-        .limit(1)
-    )
-    has_any = (await session.scalar(has_any_stmt)) is not None
-
-    if has_any:
-        if not explicit_rows:
-            return []
+    if explicit_rows:
         booked_stmt = select(Booking.starts_at).where(
             Booking.specialist_id == specialist.id,
             Booking.status == BookingStatus.CONFIRMED,
@@ -85,9 +79,11 @@ async def generate_available_slots(
             Booking.starts_at < horizon_end,
         )
         booked = set((await session.scalars(booked_stmt)).all())
-        return [slot.starts_at for slot in explicit_rows if slot.starts_at not in booked]
+        return [
+            slot.starts_at for slot in explicit_rows if slot.starts_at not in booked
+        ]
 
-    # 2) Fallback: рабочие часы мастера.
+    # 2) Fallback: рабочие часы минус отключенные слоты и записи.
     today = now.date()
     candidates: list[datetime] = []
     for offset in range(horizon_days):
@@ -99,6 +95,14 @@ async def generate_available_slots(
     if not candidates:
         return []
 
+    blocked_stmt = select(TimeSlot.starts_at).where(
+        TimeSlot.specialist_id == specialist.id,
+        TimeSlot.is_blocked.is_(True),
+        TimeSlot.starts_at >= candidates[0],
+        TimeSlot.starts_at <= candidates[-1],
+    )
+    blocked = set((await session.scalars(blocked_stmt)).all())
+
     booked_stmt = select(Booking.starts_at).where(
         Booking.specialist_id == specialist.id,
         Booking.status == BookingStatus.CONFIRMED,
@@ -107,4 +111,6 @@ async def generate_available_slots(
     )
     booked = set((await session.scalars(booked_stmt)).all())
 
-    return [slot for slot in candidates if slot not in booked]
+    return [
+        slot for slot in candidates if slot not in booked and slot not in blocked
+    ]

@@ -195,7 +195,10 @@ async def test_blocked_slot_not_offered(session: AsyncSession) -> None:
     slots = await generate_available_slots(
         session, spec, service, horizon_days=7
     )
-    assert slots == []
+    # Заблокированный слот не предлагается; остальные часы fallback-сетки доступны.
+    assert target not in slots
+    fallback_neighbor = target.replace(hour=14)
+    assert fallback_neighbor in slots
 
 
 async def test_booked_explicit_slot_excluded(session: AsyncSession) -> None:

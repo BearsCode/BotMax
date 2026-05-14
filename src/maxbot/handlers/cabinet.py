@@ -43,7 +43,13 @@ from ..keyboards import (
     CB_CAB_SERVICES,
     CB_CAB_SLOT_ACTIONS_PREFIX,
     CB_CAB_SLOT_BLOCK_PREFIX,
+    CB_CAB_SLOT_COPY_WEEK_PREFIX,
     CB_CAB_SLOT_DELETE_PREFIX,
+    CB_CAB_SLOT_DISABLE_ALL_PREFIX,
+    CB_CAB_SLOT_ENABLE_ALL_PREFIX,
+    CB_CAB_SLOT_GRID_DAY_PREFIX,
+    CB_CAB_SLOT_MANAGE,
+    CB_CAB_SLOT_TOGGLE_PREFIX,
     CB_CAB_SLOT_UNBLOCK_PREFIX,
     CB_CAB_SVC_DELETE_PREFIX,
     CB_CAB_SVC_EDIT_PREFIX,
@@ -57,28 +63,37 @@ from ..keyboards import (
     cabinet_duration_keyboard,
     cabinet_hours_keyboard,
     cabinet_main_keyboard,
+    cabinet_manage_slots_days_keyboard,
     cabinet_profile_keyboard,
     cabinet_schedule_keyboard,
     cabinet_service_actions_keyboard,
     cabinet_services_keyboard,
     cabinet_skip_description_keyboard,
     cabinet_slot_actions_keyboard,
+    cabinet_slot_grid_keyboard,
     cabinet_slot_list_keyboard,
     format_slot,
 )
 from ..services import (
     ServiceField,
+    SlotIsBookedError,
+    copy_day_disabled_to_week,
     create_service,
     create_time_slots_bulk,
     delete_service,
     delete_time_slot,
+    disable_all_slots_for_day,
+    enable_all_slots_for_day,
+    get_disabled_set_for_day,
     get_service,
     get_specialist_by_user_id,
     get_time_slot,
+    iter_grid_for_day,
     list_services,
     list_specialist_bookings,
     list_time_slots,
     set_time_slot_blocked,
+    toggle_slot_disabled,
     update_service_field,
     update_specialist_field,
 )
@@ -1285,6 +1300,280 @@ async def on_slot_delete(
         await delete_time_slot(session, slot)
     await callback.bot.send_message(chat_id=chat_id, text="Слот удалён.")
     await _show_day_schedule(callback, target_day=target_day, title="День")
+
+
+# ---- Управление слотами (toggle-сетка) -------------------------------------
+
+
+_SLOT_STEP_MINUTES = 60
+
+
+@router.message_callback(F.callback.payload == CB_CAB_SLOT_MANAGE)
+async def on_slot_manage_open(
+    callback: MessageCallback, context: MemoryContext
+) -> None:
+    """Открывает выбор дня для управления toggle-сеткой слотов."""
+    chat_id, user_id = callback.get_ids()
+    spec = await _load_specialist(user_id)
+    if spec is None:
+        return
+    await context.clear()
+    await callback.bot.send_message(
+        chat_id=chat_id,
+        text=(
+            "Управление слотами.\n"
+            "Выберите день — увидите все слоты кнопками. "
+            "Тап = включить/выключить."
+        ),
+        attachments=[cabinet_manage_slots_days_keyboard()],
+    )
+
+
+async def _show_slot_grid(
+    callback: MessageCallback,
+    *,
+    target_day: date,
+    note: str | None = None,
+) -> None:
+    """Отрисовывает toggle-сетку слотов мастера на день."""
+    chat_id, user_id = callback.get_ids()
+    async with db_session() as session:
+        spec = await get_specialist_by_user_id(session, user_id)
+        if spec is None:
+            return
+        grid = iter_grid_for_day(spec, target_day, step_minutes=_SLOT_STEP_MINUTES)
+        disabled = await get_disabled_set_for_day(session, spec, target_day)
+        day_start = datetime.combine(target_day, time.min)
+        day_end = day_start + timedelta(days=1)
+        bookings = await list_specialist_bookings(
+            session,
+            spec,
+            start=day_start,
+            end=day_end,
+            include_cancelled=False,
+        )
+    booked_starts = {b.starts_at: b for b in bookings}
+
+    day_iso = target_day.isoformat()
+    cells: list[tuple[str, str, str]] = []
+    enabled_count = 0
+    disabled_count = 0
+    booked_count = 0
+    for slot_dt in grid:
+        hhmm = slot_dt.strftime("%H:%M")
+        if slot_dt in booked_starts:
+            marker = "🔴"
+            booked_count += 1
+        elif slot_dt in disabled:
+            marker = "⛔"
+            disabled_count += 1
+        else:
+            marker = "🟢"
+            enabled_count += 1
+        payload = f"{CB_CAB_SLOT_TOGGLE_PREFIX}{day_iso}:{slot_dt.strftime('%H%M')}"
+        cells.append((hhmm, marker, payload))
+
+    if not cells:
+        await callback.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f"Управление слотами · {target_day:%d.%m}\n"
+                "Сетка пуста — задайте «Рабочие часы» в меню расписания."
+            ),
+            attachments=[cabinet_manage_slots_days_keyboard()],
+        )
+        return
+
+    weekdays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    header = (
+        f"Управление слотами · {weekdays[target_day.weekday()]} {target_day:%d.%m}\n"
+        f"Рабочие часы: {spec.work_start_hour:02d}:00–"
+        f"{spec.work_end_hour:02d}:00, шаг {_SLOT_STEP_MINUTES} мин\n"
+        f"🟢 {enabled_count} · ⛔ {disabled_count} · 🔴 {booked_count}\n"
+        "\nТап на слот — включить/выключить. 🔴 = есть запись клиента."
+    )
+    if note:
+        header = f"{note}\n\n{header}"
+
+    bookings_section: list[str] = []
+    if booked_starts:
+        bookings_section.append("\nЗапись клиента:")
+        for slot_dt, booking in sorted(booked_starts.items()):
+            client = booking.client
+            name = client.first_name
+            if client.last_name:
+                name = f"{name} {client.last_name}"
+            bookings_section.append(
+                f"  🔴 {slot_dt.strftime('%H:%M')} · {name} · {booking.service.title}"
+            )
+
+    await callback.bot.send_message(
+        chat_id=chat_id,
+        text=header + ("\n" + "\n".join(bookings_section) if bookings_section else ""),
+        attachments=[cabinet_slot_grid_keyboard(day_iso, cells)],
+    )
+
+
+@router.message_callback(
+    F.callback.payload.func(
+        lambda v: bool(v) and v.startswith(CB_CAB_SLOT_GRID_DAY_PREFIX)
+    )
+)
+async def on_slot_grid_day_pick(
+    callback: MessageCallback, context: MemoryContext
+) -> None:
+    raw = callback.callback.payload or ""
+    iso = raw[len(CB_CAB_SLOT_GRID_DAY_PREFIX) :]
+    try:
+        target_day = date.fromisoformat(iso)
+    except ValueError:
+        return
+    await context.clear()
+    await _show_slot_grid(callback, target_day=target_day)
+
+
+@router.message_callback(
+    F.callback.payload.func(
+        lambda v: bool(v) and v.startswith(CB_CAB_SLOT_TOGGLE_PREFIX)
+    )
+)
+async def on_slot_toggle(
+    callback: MessageCallback, context: MemoryContext
+) -> None:
+    chat_id, user_id = callback.get_ids()
+    raw = callback.callback.payload or ""
+    body = raw[len(CB_CAB_SLOT_TOGGLE_PREFIX) :]
+    try:
+        iso, hhmm = body.rsplit(":", 1)
+        target_day = date.fromisoformat(iso)
+        hour = int(hhmm[:2])
+        minute = int(hhmm[2:4])
+    except (ValueError, IndexError):
+        return
+    starts_at = datetime.combine(target_day, time.min).replace(
+        hour=hour, minute=minute
+    )
+
+    note: str | None = None
+    async with db_session() as session:
+        spec = await get_specialist_by_user_id(session, user_id)
+        if spec is None:
+            return
+        try:
+            now_disabled = await toggle_slot_disabled(
+                session,
+                specialist=spec,
+                starts_at=starts_at,
+                duration_minutes=_SLOT_STEP_MINUTES,
+            )
+        except SlotIsBookedError:
+            await callback.bot.send_message(
+                chat_id=chat_id,
+                text=f"На {starts_at:%H:%M} уже есть запись клиента.",
+            )
+            await _show_slot_grid(callback, target_day=target_day)
+            return
+    note = (
+        f"⛔ Слот {starts_at:%H:%M} отключён."
+        if now_disabled
+        else f"🟢 Слот {starts_at:%H:%M} включён."
+    )
+    await _show_slot_grid(callback, target_day=target_day, note=note)
+
+
+@router.message_callback(
+    F.callback.payload.func(
+        lambda v: bool(v) and v.startswith(CB_CAB_SLOT_ENABLE_ALL_PREFIX)
+    )
+)
+async def on_slot_enable_all(
+    callback: MessageCallback, context: MemoryContext
+) -> None:
+    _, user_id = callback.get_ids()
+    raw = callback.callback.payload or ""
+    iso = raw[len(CB_CAB_SLOT_ENABLE_ALL_PREFIX) :]
+    try:
+        target_day = date.fromisoformat(iso)
+    except ValueError:
+        return
+    async with db_session() as session:
+        spec = await get_specialist_by_user_id(session, user_id)
+        if spec is None:
+            return
+        removed = await enable_all_slots_for_day(session, spec, target_day)
+    note = (
+        f"🟢 Все слоты на {target_day:%d.%m} включены (снято {removed})."
+        if removed
+        else f"Все слоты на {target_day:%d.%m} и так включены."
+    )
+    await _show_slot_grid(callback, target_day=target_day, note=note)
+
+
+@router.message_callback(
+    F.callback.payload.func(
+        lambda v: bool(v) and v.startswith(CB_CAB_SLOT_DISABLE_ALL_PREFIX)
+    )
+)
+async def on_slot_disable_all(
+    callback: MessageCallback, context: MemoryContext
+) -> None:
+    _, user_id = callback.get_ids()
+    raw = callback.callback.payload or ""
+    iso = raw[len(CB_CAB_SLOT_DISABLE_ALL_PREFIX) :]
+    try:
+        target_day = date.fromisoformat(iso)
+    except ValueError:
+        return
+    async with db_session() as session:
+        spec = await get_specialist_by_user_id(session, user_id)
+        if spec is None:
+            return
+        disabled, skipped = await disable_all_slots_for_day(
+            session,
+            specialist=spec,
+            day=target_day,
+            step_minutes=_SLOT_STEP_MINUTES,
+        )
+    parts = [f"⛔ Отключено: {disabled}"]
+    if skipped:
+        parts.append(f"пропущено (запись клиента): {skipped}")
+    note = " · ".join(parts)
+    await _show_slot_grid(callback, target_day=target_day, note=note)
+
+
+@router.message_callback(
+    F.callback.payload.func(
+        lambda v: bool(v) and v.startswith(CB_CAB_SLOT_COPY_WEEK_PREFIX)
+    )
+)
+async def on_slot_copy_week(
+    callback: MessageCallback, context: MemoryContext
+) -> None:
+    chat_id, user_id = callback.get_ids()
+    raw = callback.callback.payload or ""
+    iso = raw[len(CB_CAB_SLOT_COPY_WEEK_PREFIX) :]
+    try:
+        target_day = date.fromisoformat(iso)
+    except ValueError:
+        return
+    async with db_session() as session:
+        spec = await get_specialist_by_user_id(session, user_id)
+        if spec is None:
+            return
+        total = await copy_day_disabled_to_week(
+            session,
+            specialist=spec,
+            source_day=target_day,
+            step_minutes=_SLOT_STEP_MINUTES,
+        )
+    await callback.bot.send_message(
+        chat_id=chat_id,
+        text=(
+            f"Скопировано на 7 дней вперёд (с {target_day + timedelta(days=1):%d.%m}). "
+            f"Применено отключений: {total}."
+        ),
+    )
+    await _show_slot_grid(callback, target_day=target_day)
 
 
 # Пакетное добавление слотов: дата → диапазон → длительность.
